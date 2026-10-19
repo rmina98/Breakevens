@@ -584,14 +584,16 @@ def nueva_fig(titulo, y_dec=1, leyenda=True, alto=420):
                      gridwidth=1, zeroline=False)
     return fig
 
-def agregar_linea(fig, x, y, nombre, clave_color, etiqueta_final=False):
-    """Línea de 2px. etiqueta_final=True: punto + valor al final (solo para la serie protagonista)."""
+def agregar_linea(fig, x, y, nombre, clave_color, etiqueta_final=False, eje_derecho=False):
+    """Línea de 2px. etiqueta_final=True: punto + valor al final (solo para la serie protagonista).
+    eje_derecho=True: la serie se grafica contra el eje Y secundario (derecha)."""
     d = pd.DataFrame({'x': list(x), 'y': list(y)}).dropna()
     if d.empty:
         return
     c = color(clave_color)
     fig.add_trace(go.Scatter(
         x=d['x'], y=d['y'], mode="lines", name=nombre, line=dict(color=c, width=2),
+        yaxis="y2" if eje_derecho else "y",
         hovertemplate=f"{nombre}: %{{y:.2f}}%<extra></extra>"))
     if etiqueta_final:
         fig.add_trace(go.Scatter(
@@ -794,9 +796,19 @@ def render_cer(D, precios_vivo, hoy, plazo_t, plazo_label):
 
         with tab2:
             fig2 = nueva_fig(f"Inflación anualizada implícita (TEA BE) vs tasa real CER ({cer_ticker})")
-            agregar_linea(fig2, df_hist['fecha_op'], df_hist['tea_be_pct'], "TEA BE", 'be', etiqueta_final=True)
+            # Dos escalas distintas: TEA BE a la izquierda, tasa real CER a la derecha.
+            # Cada eje lleva el color de su serie (línea del eje) para saber cuál es cuál.
+            agregar_linea(fig2, df_hist['fecha_op'], df_hist['tea_be_pct'], "TEA BE", 'be')
             agregar_linea(fig2, df_hist['fecha_op'], df_hist['tir_real_cer_pct'],
-                          f"Tasa real CER ({cer_ticker})", 'comp')
+                          f"Tasa real CER ({cer_ticker})", 'comp', eje_derecho=True)
+            fig2.update_layout(
+                margin=dict(l=10, r=10, t=70, b=10),
+                yaxis=dict(title=dict(text="TEA BE", font=dict(size=12)), automargin=True,
+                           showline=True, linewidth=2, linecolor=color('be')),
+                yaxis2=dict(title=dict(text="Tasa real CER", font=dict(size=12)), automargin=True,
+                            overlaying="y", side="right", showgrid=False, zeroline=False,
+                            ticksuffix="%", tickformat=".1f",
+                            showline=True, linewidth=2, linecolor=color('comp')))
             st.plotly_chart(fig2)
 
         with tab3:
