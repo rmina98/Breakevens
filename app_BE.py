@@ -124,10 +124,16 @@ def obtener_precios_1816(lista_tickers, api_key):
 # =========================================================
 # CARGA DE DATOS
 # =========================================================
+def ruta_inputs():
+    """Ruta del Excel único con toda la info (acepta variantes de mayúsculas: Linux distingue)."""
+    for nombre in ("Inputs.xlsx", "inputs.xlsx", "INPUTS.xlsx"):
+        if os.path.exists(nombre):
+            return nombre
+    return None
+
 @st.cache_data
 def cargar_datos_cer():
-    archivos = ["Inputs CER_2.xlsx", "Inputs CER.xlsx", "inputs cer.xlsx"]
-    file_path = next((a for a in archivos if os.path.exists(a)), None)
+    file_path = ruta_inputs()
     if file_path is None:
         return None
 
@@ -191,10 +197,11 @@ def cargar_datos_cer():
 
 @st.cache_data
 def cargar_datos_tamar():
-    if not os.path.exists("Inputs.xlsx"):
+    file_path = ruta_inputs()
+    if file_path is None:
         return None
 
-    xls = pd.ExcelFile("Inputs.xlsx")
+    xls = pd.ExcelFile(file_path)
     df_lec = pd.read_excel(xls, sheet_name='Lecaps')
     df_let = pd.read_excel(xls, sheet_name='Letam')
     df_precios = pd.read_excel(xls, sheet_name='Precios')
@@ -520,7 +527,7 @@ def render_cer(D, precios_vivo, hoy, plazo_t_selected, plazo_label):
     st.title("Dashboard: Inflación Implícita Break-Even (Tasa Fija vs CER)")
 
     if D is None:
-        st.error("Error: No se encontró el archivo 'Inputs CER_2.xlsx' ni 'Inputs CER.xlsx' en el directorio.")
+        st.error("Error: No se encontró el archivo 'Inputs.xlsx' en el directorio.")
         return
     df_lec, df_cer, df_precios, df_indice, df_tamar, feriados, pares = D
     if not pares:
@@ -746,7 +753,7 @@ def render_tamar(D, precios_vivo, hoy, plazo_t, plazo_label):
     st.title("📊 Dashboard: TAMAR Break-Even")
 
     if D is None:
-        st.error("❌ Archivo 'Inputs.xlsx' no encontrado en la carpeta.")
+        st.error("❌ Archivo 'Inputs.xlsx' no encontrado en el directorio.")
         return
     df_lec, df_let, df_precios, df_tamar, feriados = D
 
