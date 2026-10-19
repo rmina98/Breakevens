@@ -712,17 +712,6 @@ def render_cer(D, precios_vivo, hoy, plazo_t, plazo_label):
         if n_no_api:
             st.warning(f"{n_no_api} de {len(df_resumen)} pares usan (total o parcialmente) precios del Excel, "
                        "no de la API: ese precio puede ser de una fecha anterior a hoy. Ver columna 'Fuente'.")
-    if excluidos or sin_par:
-        st.warning(f"{len(excluidos)} par(es) no se pudieron calcular y {len(sin_par)} especie(s) no tienen "
-                   "contraparte. Detalle en el cuadro de abajo.")
-        with st.expander("Pares que faltan en el resumen y por qué"):
-            if excluidos:
-                st.markdown("**Pares emparejados pero no calculados**")
-                st.dataframe(pd.DataFrame(excluidos), hide_index=True)
-            if sin_par:
-                st.markdown("**Especies sin contraparte (no llegan a formar par)**")
-                st.dataframe(pd.DataFrame(sin_par), hide_index=True)
-
     st.markdown("---")
 
     # ---- Detalle del par ----
