@@ -97,17 +97,25 @@ def _get_api_key():
         pass
     return os.environ.get("API_1816_KEY")
 
-@st.cache_data(ttl=300)
-def obtener_precios_1816(lista_tickers, api_key):
-    """Lanza excepción si algo falla (así no se cachea el error)."""
+@st.cache_resource(ttl=3000)
+def _token_1816(api_key):
+    """Token reutilizado ~50 min: el plan permite máx. 50 tokens por día (compartidos con el Action)."""
     auth = requests.post("https://api.1816.com.ar/v1/auth/token",
                          json={"apiKey": api_key, "module": "mercado"}, timeout=10)
     auth.raise_for_status()
-    token = auth.json()["token"]
+    return auth.json()["token"]
 
+@st.cache_data(ttl=300)
+def obtener_precios_1816(lista_tickers, api_key):
+    """Lanza excepción si algo falla (así no se cachea el error)."""
     url = "https://api.1816.com.ar/v1/mercado/indicadores"
     params = {"tickers": [t.strip().lower() for t in lista_tickers], "campos": ["precioDirty"]}
-    response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=10)
+    response = requests.get(url, headers={"Authorization": f"Bearer {_token_1816(api_key)}"},
+                            params=params, timeout=10)
+    if response.status_code in (401, 403):  # token vencido: se pide uno nuevo una sola vez
+        _token_1816.clear()
+        response = requests.get(url, headers={"Authorization": f"Bearer {_token_1816(api_key)}"},
+                                params=params, timeout=10)
     response.raise_for_status()
     data = response.json()
 
@@ -130,8 +138,36 @@ def ruta_inputs():
             return nombre
     return None
 
+ARCHIVO_CIERRES = "precios_1816.csv"  # lo escribe guardar_cierres_be.py (GitHub Actions)
+FUENTE_HIST = "Excel + cierres 1816" if os.path.exists(ARCHIVO_CIERRES) else "Excel"
+
+def firma_archivos():
+    """Cambia cuando se modifica el Excel o llega un cierre nuevo: invalida la caché de datos."""
+    return tuple(os.path.getmtime(p) if p and os.path.exists(p) else 0
+                 for p in (ruta_inputs(), ARCHIVO_CIERRES))
+
+def combinar_precios(df_excel):
+    """Hoja Precios del Excel + cierres diarios de 1816. Donde el Excel tiene precio, manda el Excel;
+    el CSV completa las fechas (y especies) que falten."""
+    if not os.path.exists(ARCHIVO_CIERRES):
+        return df_excel
+    df_api = pd.read_csv(ARCHIVO_CIERRES, parse_dates=['Fecha'])
+    if df_api.empty:
+        return df_excel
+    a = df_excel.copy()
+    a['Fecha'] = pd.to_datetime(a['Fecha'], errors='coerce').dt.normalize()
+    a = a.dropna(subset=['Fecha']).drop_duplicates('Fecha', keep='last').set_index('Fecha')
+    df_api['Fecha'] = df_api['Fecha'].dt.normalize()
+    b = df_api.drop_duplicates('Fecha', keep='last').set_index('Fecha')
+    b.columns = [_k(c) for c in b.columns]
+    out = a.combine_first(b)
+    cols_excel = [c for c in a.columns]
+    out = out[cols_excel + [c for c in out.columns if c not in cols_excel]]  # orden del Excel primero
+    return out.reset_index()
+
 @st.cache_data
-def cargar_datos_cer():
+def cargar_datos_cer(firma):
+    """firma: ver firma_archivos() (solo sirve para invalidar la caché)."""
     file_path = ruta_inputs()
     if file_path is None:
         return None
@@ -174,6 +210,7 @@ def cargar_datos_cer():
     else:
         df_indice_clean = df_indice.copy()
 
+    df_precios = combinar_precios(df_precios)
     df_precios['Fecha_dt'] = pd.to_datetime(df_precios['Fecha']).dt.date
     df_precios = df_precios.sort_values('Fecha_dt').reset_index(drop=True)
 
@@ -221,7 +258,7 @@ def cargar_datos_cer():
     return df_lec, df_cer, df_precios, df_indice_clean, df_tamar, feriados, pares, sin_par
 
 @st.cache_data
-def cargar_datos_tamar():
+def cargar_datos_tamar(firma):
     file_path = ruta_inputs()
     if file_path is None:
         return None
@@ -238,6 +275,8 @@ def cargar_datos_tamar():
     df_tamar['Fecha'] = pd.to_datetime(df_tamar['Fecha']).dt.date
     df_tamar = df_tamar[df_tamar['Tamar'] > 0].sort_values('Fecha').reset_index(drop=True)
 
+    df_precios.columns = df_precios.columns.str.strip()
+    df_precios = combinar_precios(df_precios)
     df_precios['Fecha_dt'] = pd.to_datetime(df_precios['Fecha']).dt.date
     df_precios = df_precios.sort_values('Fecha_dt').reset_index(drop=True)
 
@@ -660,7 +699,7 @@ def render_cer(D, precios_vivo, hoy, plazo_t, plazo_label):
         f_desde, f_hasta = fecha_min_gen, fecha_max_gen
 
     # ---- Encabezado ----
-    encabezado(titulo, bajada, fecha_sim, plazo_label, "API 1816 en vivo" if precios_vivo else "Excel",
+    encabezado(titulo, bajada, fecha_sim, plazo_label, "API 1816 en vivo" if precios_vivo else FUENTE_HIST,
                extra=f" · Último CER cargado: {df_indice['Fecha'].max():%d/%m/%Y}")
 
     # ---- Resumen de mercado ----
@@ -878,7 +917,7 @@ def render_tamar(D, precios_vivo, hoy, plazo_t, plazo_label):
         f_desde, f_hasta = fecha_min_general, fecha_max_general
 
     # ---- Encabezado ----
-    encabezado(titulo, bajada, fecha_sim, plazo_label, "API 1816 en vivo" if usa_vivo else "Excel")
+    encabezado(titulo, bajada, fecha_sim, plazo_label, "API 1816 en vivo" if usa_vivo else FUENTE_HIST)
 
     res_sim = calcular_tamar_be(lecap_elegida, letam_elegida, precio_lecap_sim, precio_letam_sim, fecha_sim,
                                 df_lec, df_let, df_tamar, feriados, plazo_t=plazo_t)
@@ -960,8 +999,9 @@ def render_tamar(D, precios_vivo, hoy, plazo_t, plazo_label):
 # =========================================================
 st.markdown(CSS, unsafe_allow_html=True)
 
-D_cer = cargar_datos_cer()
-D_tamar = cargar_datos_tamar()
+_firma = firma_archivos()
+D_cer = cargar_datos_cer(_firma)
+D_tamar = cargar_datos_tamar(_firma)
 
 # Feriados para saber si el mercado está operando (se toman de cualquiera de las dos cargas)
 feriados_g = D_cer[5] if D_cer is not None else (D_tamar[4] if D_tamar is not None else set())
